@@ -19,6 +19,7 @@ Dependencies:
 """
 
 import gradio as gr
+import argparse
 import os
 import sys
 import platform
@@ -55,6 +56,11 @@ SAMPLE_RATE = validate_sample_rate(24000)  # Validated sample rate
 # Initialize model globally
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model = None
+
+# Set default value for maxchars, can be overridden by -mc parameter
+max_chars = 5000
+# Set default value for maxsegs, can be overridden by -ms parameter
+max_segs = 100
 
 def get_available_voices():
     """Get list of available voice models."""
@@ -157,10 +163,9 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str) -> Optional[
             raise ValueError("Text input cannot be empty")
             
         # Limit extremely long texts to prevent memory issues
-        MAX_CHARS = 5000
-        if len(text) > MAX_CHARS:
-            print(f"Warning: Text exceeds {MAX_CHARS} characters. Truncating to prevent memory issues.")
-            text = text[:MAX_CHARS] + "..."
+        if len(text) > max_chars:
+            print(f"Warning: Text exceeds {max_chars} characters. Truncating to prevent memory issues.")
+            text = text[:max_chars] + "..."
         
         # Generate base filename from text
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -180,13 +185,13 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str) -> Optional[
             generator = model(text, voice=voice_path, speed=1.0, split_pattern=r'\n+')
             
             all_audio = []
-            max_segments = 100  # Safety limit for very long texts
             segment_count = 0
             
             for gs, ps, audio in generator:
                 segment_count += 1
-                if segment_count > max_segments:
-                    print(f"Warning: Reached maximum segment limit ({max_segments})")
+                # Safety limit for long texts
+                if segment_count > max_segs:
+                    print(f"Warning: Reached maximum segment limit ({max_segs})")
                     break
                     
                 if audio is not None:
@@ -279,7 +284,7 @@ def create_interface(server_name="0.0.0.0", server_port=7860):
     interface.launch(
         server_name=server_name,
         server_port=server_port,
-        share=True
+        share=False
     )
 
 def cleanup_resources():
@@ -409,7 +414,20 @@ for sig in [signal.SIGINT, signal.SIGTERM]:
 
 if __name__ == "__main__":
     try:
-        create_interface()
+        parser = argparse.ArgumentParser(
+            prog='GradioInterface',
+            description='TTS Web Interface for Kokoro',
+            epilog='')
+        parser.add_argument('-p', '--port', type=int, default=7860)
+        parser.add_argument('-n', '--hostname', default="127.0.0.1")
+        parser.add_argument('-mc', '--maxchars', type=int, default=5000)
+        parser.add_argument('-ms', '--maxsegs', type=int, default=100)
+        args = parser.parse_args()
+        print(f"Starting interface listening on {args.hostname} at port {args.port}")
+        print(f"Inference running on {device}")
+        max_chars = args.maxchars
+        max_segs = args.maxsegs
+        create_interface(server_name=args.hostname, server_port=args.port)
     finally:
         # Ensure cleanup even if Gradio encounters an error
         cleanup_resources()
